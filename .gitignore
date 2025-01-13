@@ -29,4 +29,7 @@ wheels/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# project-mapper
+config.json
