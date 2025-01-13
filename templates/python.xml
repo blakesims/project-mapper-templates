@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<project-rules extends="base.xml">
+  <code-rules>
+    <file-documentation>
+      <python-specific>
+        <docstring-format>Google style docstrings preferred</docstring-format>
+        <type-hints>Use type hints for function parameters and return values</type-hints>
+        <imports>
+          - Group imports: stdlib, third-party, local
+          - Use absolute imports within the project
+          - Avoid wildcard imports
+        </imports>
+      </python-specific>
+    </file-documentation>
+    <documentation-maintenance>
+      <update-triggers>
+        <python-specific>
+          - Changes to function signatures (params/return types)
+          - New decorators or class inheritance changes
+          - Changes to import structure
+        </python-specific>
+      </update-triggers>
+    </documentation-maintenance>
+  </code-rules>
+</project-rules> 
