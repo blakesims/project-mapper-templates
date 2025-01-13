@@ -10,7 +10,7 @@
                     {ClassName}: {What this class does and why it exists}
                     {function_name}(): {What this function does and why it's needed}
 
-                Project Dependencies:
+                File Dependencies:
                     This file uses: {OtherComponent}: {Why it's used}
                     This file is used by: {OtherComponent}: {Why it's needed}
                 """
@@ -24,7 +24,7 @@
                     XMLManager: Handles reading and writing of .cursorrules XML file
                     update_rules(): Updates documentation while preserving existing rules
 
-                Project Dependencies:
+                File Dependencies:
                     This file uses: ProjectScanner: To get current project structure
                     This file is used by: CLI: To execute documentation updates
                 """
