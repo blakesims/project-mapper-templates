@@ -1,0 +1,115 @@
+<?xml version='1.0' encoding='utf-8'?>
+<project-rules extends="base.xml">
+    <development-rules>
+        <core-principles>
+            <principle name="single-source-truth">
+                All definitions must have a single source of truth in core/model_definitions.py
+            </principle>
+            <principle name="modularity">
+                Maintain clear separation of concerns between components
+            </principle>
+            <principle name="error-handling">
+                Consistent error handling and logging throughout
+            </principle>
+            <principle name="transactions">
+                No transactions needed - agents work independently
+            </principle>
+        </core-principles>
+
+        <model-definitions>
+            <rule id="field-definitions" severity="critical">
+                <title>Single Source of Truth for Fields</title>
+                <correct-pattern>
+                    ```python
+                    # In core/model_definitions.py
+                    FIELDS = {
+                        "difficulty_rating": {
+                            "name": "difficulty_rating",
+                            "description": "Rating from 1-5",
+                            "type": "int",
+                            "optional": False
+                        }
+                    }
+
+                    # In other files
+                    class DifficultyResult(BaseModel):
+                        rating: int = Field(
+                            description=FieldDefinitions.FIELDS["difficulty_rating"]["description"]
+                        )
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    # Never do this
+                    class DifficultyResult(BaseModel):
+                        rating: int = Field(
+                            description="Rating from 1-5"  # Hardcoded description
+                        )
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </model-definitions>
+
+        <agent-implementation>
+            <rule id="abstract_methods" severity="critical">
+                <title>Implement All Abstract Methods</title>
+                <required-methods>
+                    <method name="process_content">Process single piece of content</method>
+                    <method name="store_result">Store processing results</method>
+                    <method name="update_status">Update processing status flags</method>
+                    <method name="get_unprocessed_segments">Get segments needing processing</method>
+                </required-methods>
+                <example>
+                    ```python
+                    class MyAgent(BaseAgent):
+                        async def process_content(self):
+                            # Implementation required
+                        
+                        async def store_result(self):
+                            # Implementation required
+                        
+                        async def update_status(self):
+                            # Implementation required
+                    ```
+                </example>
+            </rule>
+        </agent-implementation>
+
+        <workflow>
+            <field-modifications>
+                <steps>
+                    <step>1. Update core/model_definitions.py</step>
+                    <step>2. Run python -m utils.validate_models</step>
+                    <step>3. Fix validation errors</step>
+                    <step>4. Update tests</step>
+                </steps>
+            </field-modifications>
+
+            <validation>
+                <command>grep -r "description=\"" . --include="*.py" --exclude="model_definitions.py"</command>
+                <purpose>Find unauthorized hardcoded descriptions</purpose>
+            </validation>
+        </workflow>
+
+        <common-pitfalls>
+            <pitfall>Defining field properties in multiple places</pitfall>
+            <pitfall>Writing hardcoded descriptions</pitfall>
+            <pitfall>Skipping validation after changes</pitfall>
+            <pitfall>Using bare try/except blocks</pitfall>
+        </common-pitfalls>
+
+        <llm-instructions>
+            Before modifying any code:
+            1. Check if changes affect field definitions
+            2. Verify abstract method implementations
+            3. Run validation commands
+            4. Review common pitfalls
+
+            When implementing agents:
+            1. Implement ALL required abstract methods
+            2. Maintain consistent error handling
+            3. Follow single source of truth principle
+            4. Update documentation appropriately
+        </llm-instructions>
+    </development-rules>
+</project-rules>
