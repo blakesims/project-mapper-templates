@@ -11,10 +11,69 @@
             <principle name="error-handling">
                 Consistent error handling and logging throughout
             </principle>
-            <principle name="transactions">
-                No transactions needed - agents work independently
+            <principle name="async-consistency">
+                All database operations must follow consistent async patterns with explicit session management
+            </principle>
+            <principle name="session-management">
+                Database sessions must be managed through async context managers with clear transaction boundaries
             </principle>
         </core-principles>
+
+        <async-database-patterns>
+            <rule id="session-management" severity="critical">
+                <title>Async Session Management Patterns</title>
+                <correct-patterns>
+                    <pattern name="session-context">
+                        ```python
+                        # Always use async context managers for sessions
+                        async with self.session() as session:
+                            try:
+                                result = await session.execute(query)
+                                await session.commit()
+                            except SQLAlchemyError as e:
+                                await session.rollback()
+                                raise DatabaseError(f"Operation failed: {str(e)}")
+                        ```
+                    </pattern>
+                    <pattern name="session-provider">
+                        ```python
+                        # Session factory pattern
+                        @asynccontextmanager
+                        async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
+                            async with self._session_factory() as session:
+                                try:
+                                    yield session
+                                finally:
+                                    await session.close()
+                        ```
+                    </pattern>
+                </correct-patterns>
+                <incorrect-patterns>
+                    <pattern name="mixed-async">
+                        ```python
+                        # Never mix sync/async operations
+                        def get_session(self):
+                            return self._session_factory()  # Wrong - sync return
+                        ```
+                    </pattern>
+                    <pattern name="unmanaged-session">
+                        ```python
+                        # Never use unmanaged sessions
+                        async def operation(self):
+                            session = self._session_factory()  # Wrong - no context
+                            result = await session.execute(query)
+                        ```
+                    </pattern>
+                </incorrect-patterns>
+                <validation-checks>
+                    <check>All session creation uses async context managers</check>
+                    <check>All session operations are properly awaited</check>
+                    <check>All transaction boundaries are explicit</check>
+                    <check>No mixing of sync and async patterns</check>
+                    <check>All sessions are properly closed</check>
+                </validation-checks>
+            </rule>
+        </async-database-patterns>
 
         <model-definitions>
             <rule id="field-definitions" severity="critical">
@@ -37,6 +96,7 @@
                             description=FieldDefinitions.FIELDS["difficulty_rating"]["description"]
                         )
                     ```
+                    Note the use of `BaseModel` since we are using Field definitions with descriptions
                 </correct-pattern>
                 <incorrect-pattern>
                     ```python
@@ -89,6 +149,11 @@
                 <command>grep -r "description=\"" . --include="*.py" --exclude="model_definitions.py"</command>
                 <purpose>Find unauthorized hardcoded descriptions</purpose>
             </validation>
+            
+            <async-validation>
+                <command>grep -r "async\|await" . --include="*.py"</command>
+                <purpose>Verify consistent async/await usage</purpose>
+            </async-validation>
         </workflow>
 
         <common-pitfalls>
@@ -96,6 +161,11 @@
             <pitfall>Writing hardcoded descriptions</pitfall>
             <pitfall>Skipping validation after changes</pitfall>
             <pitfall>Using bare try/except blocks</pitfall>
+            <pitfall>Missing await statements on async operations</pitfall>
+            <pitfall>Mixing sync and async session handling</pitfall>
+            <pitfall>Unmanaged database sessions</pitfall>
+            <pitfall>Unclear transaction boundaries</pitfall>
+            <pitfall>Not properly closing sessions</pitfall>
         </common-pitfalls>
 
         <llm-instructions>
@@ -104,12 +174,21 @@
             2. Verify abstract method implementations
             3. Run validation commands
             4. Review common pitfalls
+            5. Verify async/await consistency
+            6. Check session management patterns
+
+            When implementing database operations:
+            1. Always use async context managers for sessions
+            2. Ensure proper transaction boundaries
+            3. Handle session cleanup correctly
+            4. Maintain consistent async patterns
 
             When implementing agents:
             1. Implement ALL required abstract methods
             2. Maintain consistent error handling
             3. Follow single source of truth principle
             4. Update documentation appropriately
+            5. Ensure proper async/await usage
         </llm-instructions>
     </development-rules>
 </project-rules>
