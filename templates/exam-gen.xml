@@ -11,66 +11,111 @@
             <principle name="error-handling">
                 Consistent error handling and logging throughout
             </principle>
-            <principle name="async-consistency">
-                All database operations must follow consistent async patterns with explicit session management
+            <principle name="async-session-management">
+                All database operations must use async context managers with explicit transaction boundaries managed by AsyncSessionManager
             </principle>
-            <principle name="session-management">
-                Database sessions must be managed through async context managers with clear transaction boundaries
+            <principle name="repository-statefulness">
+                Repositories must be stateless with session management delegated to AsyncSessionManager
+            </principle>
+            <principle name="persistence-boundaries">
+                Repositories mark changes with flush(), services control transactions with commit()/rollback()
             </principle>
         </core-principles>
 
         <async-database-patterns>
             <rule id="session-management" severity="critical">
                 <title>Async Session Management Patterns</title>
+                <ownership-hierarchy>
+                    <layer name="AsyncSessionManager">
+                        Owns session lifecycle and transaction boundaries
+                        Provides session factory and context managers
+                        Handles commit/rollback operations
+                        Single source of truth for database sessions
+                    </layer>
+                    <layer name="Repository">
+                        Uses AsyncSessionManager for sessions
+                        Uses flush() to mark changes without committing
+                        Never calls commit() or rollback()
+                        Maintains stateless operation
+                    </layer>
+                    <layer name="Service">
+                        Coordinates operations within single transaction
+                        Manages transaction boundaries (commit/rollback)
+                        Uses repository methods through AsyncSessionManager context
+                        Handles error propagation and rollback
+                    </layer>
+                </ownership-hierarchy>
                 <correct-patterns>
                     <pattern name="session-context">
                         ```python
-                        # Always use async context managers for sessions
-                        async with self.session() as session:
-                            try:
-                                result = await session.execute(query)
-                                await session.commit()
-                            except SQLAlchemyError as e:
-                                await session.rollback()
-                                raise DatabaseError(f"Operation failed: {str(e)}")
+                        # Service layer session management
+                        class DocumentService:
+                            def __init__(self, session_manager: AsyncSessionManager):
+                                self._session_manager = session_manager
+                                self._repository = DocumentRepository(session_manager)
+
+                            async def create_document(self, data: Dict[str, Any]) -> Document:
+                                async with self._session_manager.get_session() as session:
+                                    try:
+                                        doc = await self._repository.create(data)
+                                        await session.commit()
+                                        return doc
+                                    except Exception as e:
+                                        await session.rollback()
+                                        raise ServiceError(f"Failed to create document: {str(e)}")
                         ```
                     </pattern>
-                    <pattern name="session-provider">
+                    <pattern name="repository-pattern">
                         ```python
-                        # Session factory pattern
-                        @asynccontextmanager
-                        async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
-                            async with self._session_factory() as session:
-                                try:
-                                    yield session
-                                finally:
-                                    await session.close()
+                        # Repository layer with proper session handling
+                        class DocumentRepository:
+                            def __init__(self, session_manager: AsyncSessionManager):
+                                self._session_manager = session_manager
+                            
+                            @property
+                            def session(self) -> AsyncSession:
+                                return self._session_manager.get_session()
+
+                            async def create(self, data: Dict[str, Any]) -> Document:
+                                async with self.session() as session:
+                                    try:
+                                        entity = Document(**data)
+                                        session.add(entity)
+                                        await session.flush()  # Mark changes only
+                                        return entity
+                                    except Exception as e:
+                                        raise RepositoryError(f"Failed to create: {str(e)}")
                         ```
                     </pattern>
                 </correct-patterns>
                 <incorrect-patterns>
-                    <pattern name="mixed-async">
-                        ```python
-                        # Never mix sync/async operations
-                        def get_session(self):
-                            return self._session_factory()  # Wrong - sync return
-                        ```
-                    </pattern>
                     <pattern name="unmanaged-session">
                         ```python
-                        # Never use unmanaged sessions
-                        async def operation(self):
-                            session = self._session_factory()  # Wrong - no context
-                            result = await session.execute(query)
+                        # Never use unmanaged sessions or commit in repositories
+                        class BadRepository:
+                            async def create(self, data: Dict[str, Any]) -> None:
+                                session = self._session_factory()  # Wrong - no context
+                                await session.commit()  # Wrong - repository should not commit
+                        ```
+                    </pattern>
+                    <pattern name="service-direct-session">
+                        ```python
+                        # Never access session directly in service
+                        class BadService:
+                            def __init__(self):
+                                self._session = create_session()  # Wrong - direct session creation
                         ```
                     </pattern>
                 </incorrect-patterns>
                 <validation-checks>
                     <check>All session creation uses async context managers</check>
                     <check>All session operations are properly awaited</check>
-                    <check>All transaction boundaries are explicit</check>
-                    <check>No mixing of sync and async patterns</check>
-                    <check>All sessions are properly closed</check>
+                    <check>Repositories never commit transactions</check>
+                    <check>Services use single transaction per operation</check>
+                    <check>Services must use AsyncSessionManager for transactions</check>
+                    <check>Session lifecycle contained within async context</check>
+                    <check>Repository methods use flush() instead of commit()</check>
+                    <check>No direct session creation outside AsyncSessionManager</check>
                 </validation-checks>
             </rule>
         </async-database-patterns>
@@ -96,14 +141,12 @@
                             description=FieldDefinitions.FIELDS["difficulty_rating"]["description"]
                         )
                     ```
-                    Note the use of `BaseModel` since we are using Field definitions with descriptions
                 </correct-pattern>
                 <incorrect-pattern>
                     ```python
-                    # Never do this
                     class DifficultyResult(BaseModel):
                         rating: int = Field(
-                            description="Rating from 1-5"  # Hardcoded description
+                            description="Rating from 1-5"  # Wrong - hardcoded description
                         )
                     ```
                 </incorrect-pattern>
