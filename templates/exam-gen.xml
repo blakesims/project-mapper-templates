@@ -116,6 +116,10 @@
                     <check>Session lifecycle contained within async context</check>
                     <check>Repository methods use flush() instead of commit()</check>
                     <check>No direct session creation outside AsyncSessionManager</check>
+                    <check>Repository methods only accept domain models</check>
+                    <check>Repository methods only return domain models</check>
+                    <check>No SQLAlchemy model imports in service layer</check>
+                    <check>No direct database operations in service layer</check>
                 </validation-checks>
             </rule>
         </async-database-patterns>
@@ -152,6 +156,100 @@
                 </incorrect-pattern>
             </rule>
         </model-definitions>
+
+        <domain-translation>
+            <rule id="model-translation" severity="critical">
+                <title>Domain and Database Model Translation</title>
+                <principle>
+                    Repositories must handle translation between domain and database models
+                </principle>
+                <correct-pattern>
+                    ```python
+                    # Repository handles translation
+                    class DocumentRepository:
+                        async def create(self, document: Document) -> Document:
+                            db_doc = self._to_db_model(document)
+                            session.add(db_doc)
+                            await session.flush()
+                            return self._to_domain_model(db_doc)
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    # Service handling database models directly
+                    class DocumentService:
+                        async def create(self, data: Dict[str, Any]):
+                            db_doc = SourceDocument(**data)  # Wrong - service shouldn't know about DB models
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </domain-translation>
+
+        <session-passing>
+            <rule id="session-delegation" severity="critical">
+                <title>Session Delegation Pattern</title>
+                <correct-pattern>
+                    ```python
+                    # Service creates and manages session
+                    async with session_manager.get_session() as session:
+                        # Pass session to repository operations
+                        await repository.create(document, session=session)
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    # Repository creating own sessions
+                    async def create(self, document: Document):
+                        async with self._session_manager.get_session() as session:  # Wrong
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </session-passing>
+
+        <repository-state>
+            <rule id="state-management" severity="critical">
+                <principle>
+                    Repositories must be stateless and not maintain session state
+                </principle>
+                <correct-pattern>
+                    ```python
+                    class DocumentRepository:
+                        async def create(self, document: Document, session: AsyncSession):
+                            # Use provided session
+                            session.add(self._to_db_model(document))
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    class DocumentRepository:
+                        def __init__(self):
+                            self._current_session = None  # Wrong - storing session state
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </repository-state>
+
+        <service-layer>
+            <rule id="service-responsibilities" severity="critical">
+                <responsibilities>
+                    <item>Work only with domain models</item>
+                    <item>Control transaction boundaries</item>
+                    <item>Coordinate multiple repository operations</item>
+                    <item>Handle business logic validation</item>
+                </responsibilities>
+                <correct-pattern>
+                    ```python
+                    class DocumentService:
+                        async def process_document(self, document: Document):
+                            async with self._session_manager.get_session() as session:
+                                # Multiple repository operations in single transaction
+                                doc = await self.repository.create(document, session)
+                                await self.repository.process_segments(doc.id, session)
+                                await session.commit()
+                    ```
+                </correct-pattern>
+            </rule>
+        </service-layer>
 
         <agent-implementation>
             <rule id="abstract_methods" severity="critical">
