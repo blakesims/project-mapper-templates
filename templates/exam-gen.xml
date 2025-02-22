@@ -15,10 +15,13 @@
                 All database operations must use async context managers with explicit transaction boundaries managed by AsyncSessionManager
             </principle>
             <principle name="repository-statefulness">
-                Repositories must be stateless with session management delegated to AsyncSessionManager
+                Repositories must be stateless with sessions passed as method parameters
             </principle>
             <principle name="persistence-boundaries">
                 Repositories mark changes with flush(), services control transactions with commit()/rollback()
+            </principle>
+            <principle name="session-ownership">
+                Services own session lifecycle and transaction boundaries, repositories receive sessions as parameters
             </principle>
         </core-principles>
 
@@ -33,15 +36,17 @@
                         Single source of truth for database sessions
                     </layer>
                     <layer name="Repository">
-                        Uses AsyncSessionManager for sessions
+                        Accepts session as method parameter
+                        Uses provided session to perform database operations
                         Uses flush() to mark changes without committing
                         Never calls commit() or rollback()
-                        Maintains stateless operation
+                        Maintains stateless operation regarding sessions
                     </layer>
                     <layer name="Service">
                         Coordinates operations within single transaction
                         Manages transaction boundaries (commit/rollback)
-                        Uses repository methods through AsyncSessionManager context
+                        Creates sessions via AsyncSessionManager context
+                        Passes sessions to repository methods
                         Handles error propagation and rollback
                     </layer>
                 </ownership-hierarchy>
@@ -50,41 +55,59 @@
                         ```python
                         # Service layer session management
                         class DocumentService:
-                            def __init__(self, session_manager: AsyncSessionManager):
+                            def __init__(self, session_manager: AsyncSessionManager, repository: DocumentRepository):
                                 self._session_manager = session_manager
-                                self._repository = DocumentRepository(session_manager)
+                                self._repository = repository
 
                             async def create_document(self, data: Dict[str, Any]) -> Document:
                                 async with self._session_manager.get_session() as session:
                                     try:
-                                        doc = await self._repository.create(data)
+                                        doc = await self._repository.create(data, session)
                                         await session.commit()
                                         return doc
                                     except Exception as e:
                                         await session.rollback()
                                         raise ServiceError(f"Failed to create document: {str(e)}")
+                                        
+                            async def process_document(self, document: Document) -> Document:
+                                async with self._session_manager.get_session() as session:
+                                    try:
+                                        # Multiple operations in single transaction
+                                        doc = await self._repository.create(document, session)
+                                        await self._repository.process_segments(doc.id, session)
+                                        await session.commit()
+                                        return doc
+                                    except Exception as e:
+                                        await session.rollback()
+                                        raise ServiceError(f"Failed to process document: {str(e)}")
                         ```
                     </pattern>
                     <pattern name="repository-pattern">
                         ```python
                         # Repository layer with proper session handling
                         class DocumentRepository:
-                            def __init__(self, session_manager: AsyncSessionManager):
-                                self._session_manager = session_manager
-                            
-                            @property
-                            def session(self) -> AsyncSession:
-                                return self._session_manager.get_session()
+                            def __init__(self):
+                                pass  # No session manager stored
 
-                            async def create(self, data: Dict[str, Any]) -> Document:
-                                async with self.session() as session:
-                                    try:
-                                        entity = Document(**data)
-                                        session.add(entity)
-                                        await session.flush()  # Mark changes only
-                                        return entity
-                                    except Exception as e:
-                                        raise RepositoryError(f"Failed to create: {str(e)}")
+                            async def create(self, data: Dict[str, Any], session: AsyncSession) -> Document:
+                                try:
+                                    entity = Document(**data)
+                                    session.add(entity)
+                                    await session.flush()  # Mark changes only
+                                    return entity
+                                except Exception as e:
+                                    raise RepositoryError(f"Failed to create: {str(e)}")
+
+                            async def process_segments(self, doc_id: int, session: AsyncSession) -> None:
+                                try:
+                                    segments = await session.execute(
+                                        select(DocumentSegment).where(DocumentSegment.doc_id == doc_id)
+                                    )
+                                    for segment in segments:
+                                        # Process segment
+                                        await session.flush()
+                                except Exception as e:
+                                    raise RepositoryError(f"Failed to process segments: {str(e)}")
                         ```
                     </pattern>
                 </correct-patterns>
@@ -93,8 +116,11 @@
                         ```python
                         # Never use unmanaged sessions or commit in repositories
                         class BadRepository:
+                            def __init__(self, session_manager):  # Wrong - storing session manager
+                                self._session_manager = session_manager
+                            
                             async def create(self, data: Dict[str, Any]) -> None:
-                                session = self._session_factory()  # Wrong - no context
+                                session = self._session_manager.get_session()  # Wrong - managing sessions
                                 await session.commit()  # Wrong - repository should not commit
                         ```
                     </pattern>
@@ -120,11 +146,14 @@
                     <check>Repository methods only return domain models</check>
                     <check>No SQLAlchemy model imports in service layer</check>
                     <check>No direct database operations in service layer</check>
+                    <check>Repositories do not store session managers</check>
+                    <check>Sessions are passed as parameters to repository methods</check>
                 </validation-checks>
             </rule>
         </async-database-patterns>
 
-        <model-definitions>
+
+<model-definitions>
             <rule id="field-definitions" severity="critical">
                 <title>Single Source of Truth for Fields</title>
                 <correct-pattern>
