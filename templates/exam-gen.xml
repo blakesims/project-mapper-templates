@@ -84,12 +84,10 @@
                     </pattern>
                     <pattern name="repository-pattern">
                         ```python
-                        # Repository layer with proper session handling
+                        # Repository layer with proper session handling - Static Method Approach
                         class DocumentRepository:
-                            def __init__(self):
-                                pass  # No session manager stored
-
-                            async def create(self, data: Dict[str, Any], session: AsyncSession) -> Document:
+                            @staticmethod
+                            async def create(data: Dict[str, Any], session: AsyncSession) -> Document:
                                 try:
                                     entity = Document(**data)
                                     session.add(entity)
@@ -98,7 +96,8 @@
                                 except Exception as e:
                                     raise RepositoryError(f"Failed to create: {str(e)}")
 
-                            async def process_segments(self, doc_id: int, session: AsyncSession) -> None:
+                            @staticmethod
+                            async def process_segments(doc_id: int, session: AsyncSession) -> None:
                                 try:
                                     segments = await session.execute(
                                         select(DocumentSegment).where(DocumentSegment.doc_id == doc_id)
@@ -152,8 +151,7 @@
             </rule>
         </async-database-patterns>
 
-
-<model-definitions>
+        <model-definitions>
             <rule id="field-definitions" severity="critical">
                 <title>Single Source of Truth for Fields</title>
                 <correct-pattern>
@@ -304,6 +302,124 @@
                 </example>
             </rule>
         </agent-implementation>
+
+        <agent-integration>
+            <rule id="agent-session-management" severity="critical">
+                <title>Agent Session Management</title>
+                <correct-pattern>
+                    ```python
+                    # Agent with session parameter
+                    class SeparatorAgent:
+                        def __init__(self, config: Dict):
+                            self.config = config
+                            
+                        async def process_content(
+                            self, 
+                            content: str, 
+                            source_doc_id: int,
+                            session: AsyncSession
+                        ) -> SeparatorResult:
+                            # Use provided session for database operations
+                            segments = self._process_with_llm(content)
+                            
+                            # Create database models
+                            db_segments = [ContentSegment(**s.dict()) for s in segments]
+                            
+                            # Add to session
+                            for segment in db_segments:
+                                session.add(segment)
+                            await session.flush()
+                            
+                            return SeparatorResult(segments=segments, source_doc_id=source_doc_id)
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    # Agent with database operations dependency
+                    class SeparatorAgent:
+                        def __init__(self, config: Dict, db: SQLAlchemyDatabaseOperations):
+                            self.db = db  # Wrong - should not depend on database operations
+                            
+                        async def process_content(self, content: str, source_doc_id: int) -> SeparatorResult:
+                            # Wrong - using stored database operations
+                            await self.db.process_document_segments(segments, source_doc_id)
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </agent-integration>
+
+        <command-layer>
+            <rule id="command-session-management" severity="critical">
+                <title>Command Layer Session Management</title>
+                <correct-pattern>
+                    ```python
+                    # Command with session manager
+                    class IngestCommand(BaseCommand):
+                        async def initialize(self):
+                            # ...
+                            self._session_manager = get_session_manager()
+                            self.service = DocumentIngestionService(
+                                session_manager=self._session_manager,
+                                progress=self.progress,
+                                # ...
+                            )
+                        
+                        async def execute(self, location: DocumentLocation):
+                            # Service handles session creation and transaction boundaries
+                            result = await self.service.ingest_document(location)
+                            return result
+                    ```
+                </correct-pattern>
+                <incorrect-pattern>
+                    ```python
+                    # Command creating sessions directly
+                    class IngestCommand(BaseCommand):
+                        async def execute(self, location: DocumentLocation):
+                            async with get_session() as session:  # Wrong - command should not create sessions directly
+                                # Wrong - bypassing service layer
+                                doc = await self.repository.create_document(location, session)
+                    ```
+                </incorrect-pattern>
+            </rule>
+        </command-layer>
+
+        <repository-implementation>
+            <rule id="repository-method-style" severity="medium">
+                <title>Repository Method Implementation Style</title>
+                <options>
+                    <option name="static-methods" recommended="true">
+                        <description>
+                            Static methods provide complete statelessness and make the session parameter explicit.
+                            This approach is recommended for clarity and to prevent accidental state storage.
+                        </description>
+                        <example>
+                            ```python
+                            class DocumentRepository:
+                                @staticmethod
+                                async def create(document: Document, session: AsyncSession) -> Document:
+                                    # Implementation
+                            ```
+                        </example>
+                    </option>
+                    <option name="instance-methods">
+                        <description>
+                            Instance methods can be used if the repository needs to share configuration or utilities.
+                            The session must still be passed as a parameter to each method.
+                        </description>
+                        <example>
+                            ```python
+                            class DocumentRepository:
+                                def __init__(self, config: Dict[str, Any]):
+                                    self._config = config  # Only configuration, no session
+                                    
+                                async def create(self, document: Document, session: AsyncSession) -> Document:
+                                    # Implementation using self._config
+                            ```
+                        </example>
+                    </option>
+                </options>
+            </rule>
+        </repository-implementation>
 
         <workflow>
             <field-modifications>
